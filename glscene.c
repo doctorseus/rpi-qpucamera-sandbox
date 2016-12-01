@@ -163,13 +163,16 @@ static void ogl_draw(app_state_t *app){
 static void app_init(app_state_t *app) {
     const GLchar *vshader_source =
     "attribute vec4 vertex;"
+    "varying vec2 tcoord;"
     "void main(void) {"
     "   gl_Position = vertex;"
+    "   tcoord = vertex.xy*0.5+0.5;"
     "}";
 
     const GLchar *fshader_source =
+    "varying vec2 tcoord;"
     "void main(void) {"
-    "   gl_FragColor = vec4(1.0, 1.0, 0.0, 1.0);"
+    "   gl_FragColor = vec4(tcoord.x, tcoord.y, 1.0, 1.0);"
     "}";
     
     // Compile vertex shader
