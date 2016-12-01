@@ -14,7 +14,23 @@ typedef struct app_state_s {
     
     int screen_width;
     int screen_height;
+    
+    GLuint buf_vertex;
+    GLuint attr_vertex;
+    GLuint tex_obj;
+    GLuint tex_fb;
+    
+    GLuint shader_vshader;
+    GLuint shader_fshader;
+    GLuint shader_program;
 } app_state_t;
+
+static void ogl_init(app_state_t *app);
+static void ogl_destroy(app_state_t *app);
+static void ogl_draw(app_state_t *app);
+
+static void app_init(app_state_t *app);
+static void app_draw(app_state_t *app);
 
 static void ogl_init(app_state_t *app) {
     int32_t success = 0;
@@ -128,10 +144,13 @@ static void ogl_destroy(app_state_t *app) {
 }
 
 static void ogl_draw(app_state_t *app){
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
     check();
 
-    // TODO: draw the frame here
+    // draw app frame
+    app_draw(app);
 
     glFlush();
     glFinish();
@@ -139,6 +158,99 @@ static void ogl_draw(app_state_t *app){
 
     eglSwapBuffers(app->egl_display, app->egl_surface);
     check();
+}
+
+static void app_init(app_state_t *app) {
+    const GLchar *vshader_source =
+    "attribute vec4 vertex;"
+    "void main(void) {"
+    "   gl_Position = vertex;"
+    "}";
+
+    const GLchar *fshader_source =
+    "void main(void) {"
+    "   gl_FragColor = vec4(1.0, 1.0, 0.0, 1.0);"
+    "}";
+    
+    // Compile vertex shader
+    app->shader_vshader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(app->shader_vshader, 1, &vshader_source, 0);
+    glCompileShader(app->shader_vshader);
+    check();
+
+    // Compile fragment shader
+    app->shader_fshader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(app->shader_fshader, 1, &fshader_source, 0);
+    glCompileShader(app->shader_fshader);
+    check();
+
+    // Link shader
+    app->shader_program = glCreateProgram();
+    glAttachShader(app->shader_program, app->shader_vshader);
+    glAttachShader(app->shader_program, app->shader_fshader);
+    glLinkProgram(app->shader_program);
+    check();
+    
+    app->attr_vertex = glGetAttribLocation(app->shader_program, "vertex");
+    
+    // Vertex data
+    static const GLfloat vertex_data[] = {
+        -1.0,-1.0,1.0,1.0,
+        1.0,-1.0,1.0,1.0,
+        1.0,1.0,1.0,1.0,
+        -1.0,1.0,1.0,1.0
+    };
+    
+    // Upload vertex data to a buffer
+    glGenBuffers(1, &app->buf_vertex);
+    glBindBuffer(GL_ARRAY_BUFFER, app->buf_vertex);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertex_data), vertex_data, GL_STATIC_DRAW);
+    glVertexAttribPointer(app->attr_vertex, 4, GL_FLOAT, 0, 16, 0);
+    glEnableVertexAttribArray(app->attr_vertex);
+    check();
+    
+    // Prepare viewport
+    glViewport(0, 0, app->screen_width, app->screen_height);
+    check();
+    
+    /*
+    // Prepare a texture image
+    glGenTextures(1, &app->tex_obj);
+    check();
+    glBindTexture(GL_TEXTURE_2D, app->tex_obj);
+    check();
+    
+    // glActiveTexture(0)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, app->screen_width, app->screen_height, 0, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, 0);
+    check();
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    check();
+    
+    
+    // Prepare a framebuffer for rendering
+    glGenFramebuffers(1, &app->tex_fb);
+    check();
+    glBindFramebuffer(GL_FRAMEBUFFER, app->tex_fb);
+    check();
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D, app->tex_obj, 0);
+    check();
+    glBindFramebuffer(GL_FRAMEBUFFER,0);
+    check();
+    */
+}
+
+static void app_draw(app_state_t *app) {
+    glBindBuffer(GL_ARRAY_BUFFER, app->buf_vertex);
+    check();
+    
+    glUseProgram(app->shader_program);
+    check();
+
+    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+    check();
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
 int main(int argc, char **argv)
@@ -164,7 +276,8 @@ int main(int argc, char **argv)
     s = eglQueryString(app.egl_display, EGL_CLIENT_APIS);
     printf("EGL_CLIENT_APIS = %s\n", s);
 
-    
+    // Initialize Application (Shaders,...)
+    app_init(&app);
     
     int terminate = 0;
     while (!terminate) {
