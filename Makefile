@@ -2,7 +2,7 @@ CC	=	gcc
 CFLAGS	=	-c -Wall
 LDFLAGS	=
 
-GLCAM_PROGRAM	=	glcamera
+all: glcamera glscene
 
 GLCAM_INCLUDES	=	-I./\
 					-I/opt/vc/include/
@@ -12,10 +12,12 @@ GLCAM_SOURCES	=	main.c RaspiCamControl.c RaspiCLI.c
 #GLCAM_LDFLAGS	=	-L/opt/vc/lib/ -lmmal -lmmal_core -lmmal_util -lvcos -pthread -lbcm_host -lbrcmGLESv2 -lbrcmEGL -lm
 GLCAM_LDFLAGS	=	-L/opt/vc/lib/ -lmmal -lmmal_core -lmmal_util -lvcos -lbcm_host
 
-all: $(GLCAM_PROGRAM)
-
-$(GLCAM_PROGRAM): clean
+glcamera: clean
 	$(CC) $(GLCAM_INCLUDES) $(GLCAM_SOURCES) $(GLCAM_LDFLAGS) -o $@
 
+glscene: clean
+	$(CC) $(GLCAM_INCLUDES) $(GLCAM_LDFLAGS) -lbrcmEGL -lbrcmGLESv2 glscene.c -o $@
+
 clean:
-	rm -f $(GLCAM_PROGRAM)
+	rm -f glcamera
+	rm -f glscene

@@ -400,7 +400,7 @@ int main(int argc, char **argv)
 
     mmal_camera_create();
 
-    time_t tstop = time(NULL) + 5;
+    time_t tstop = time(NULL) + 1;
     while (time(NULL) < tstop) {
         //wait 5 seconds
         if(mmal_camera_read_frame()){
