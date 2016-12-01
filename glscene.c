@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <assert.h>
+#include <time.h>
 
 #include <GLES2/gl2.h>
 #include <EGL/egl.h>
@@ -11,7 +12,7 @@ typedef struct app_state_s {
     EGLDisplay egl_display;
     EGLSurface egl_surface;
     EGLContext egl_context;
-    
+
     int screen_width;
     int screen_height;
     
@@ -283,8 +284,17 @@ int main(int argc, char **argv)
     app_init(&app);
     
     int terminate = 0;
+    struct timespec start, stop;
+    double accum;
     while (!terminate) {
+        clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+        
         ogl_draw(&app);
+        
+        clock_gettime(CLOCK_MONOTONIC_RAW, &stop);
+        //accum = ( stop.tv_sec - start.tv_sec ) + ( stop.tv_nsec - start.tv_nsec ) / 1000000.0;
+        accum = 1000 / (( stop.tv_sec - start.tv_sec ) + ( stop.tv_nsec - start.tv_nsec ) / 1000000.0);
+        printf( "fps = %lf\n", accum);
     }
     
     ogl_destroy(&app);
