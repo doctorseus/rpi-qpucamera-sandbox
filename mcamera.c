@@ -25,41 +25,37 @@
 #include <stdio.h>
 #include <time.h>
 #include <stdbool.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+
+#include "bcm_host.h"
 
 #include "interface/mmal/mmal.h"
 #include "interface/mmal/util/mmal_default_components.h"
+#include "interface/mmal/util/mmal_util.h"
+#include "interface/mmal/util/mmal_util_params.h"
 
 #include "RaspiCamControl.h"
 
-#include <GLES2/gl2.h>
-#include <GLES/gl.h>
-#include <GLES/glext.h>
-#include <EGL/egl.h>
-#include "EGL/eglext.h"
-#include <EGL/eglext_brcm.h>
+// Defines for vc mem mapping
+#include "mailbox.h"
+#include <linux/ioctl.h>
+#define VC_MEM_IOC_MAGIC 'v'
+#define VC_MEM_IOC_MEM_PHYS_ADDR    _IOR( VC_MEM_IOC_MAGIC, 0, unsigned long )
+#define VC_MEM_IOC_MEM_SIZE         _IOR( VC_MEM_IOC_MAGIC, 1, uint32_t )
+#define VC_MEM_IOC_MEM_BASE         _IOR( VC_MEM_IOC_MAGIC, 2, uint32_t )
+#define VC_MEM_IOC_MEM_LOAD         _IOR( VC_MEM_IOC_MAGIC, 3, uint32_t )
 
-#define check() assert(glGetError() == 0)
+#define BUS_TO_PHYS(x) ((x)&~0xC0000000)
 
-typedef struct app_state_s {
-    EGLDisplay egl_display;
-    EGLSurface egl_surface;
-    EGLContext egl_context;
-
-    int screen_width;
-    int screen_height;
-    
-    
-    GLuint buf_vertex;
-    GLuint attr_vertex;
-    GLuint shader_vshader;
-    GLuint shader_fshader;
-    GLuint shader_program;
-    
-    GLuint cam_ytex, cam_utex, cam_vtex;
-    EGLImageKHR cam_yimg;
-    EGLImageKHR cam_uimg;
-    EGLImageKHR cam_vimg;
-} app_state_t;
+struct {
+    int mailboxfd;
+    int vcfd;
+    volatile uint32_t * vcmem;
+} app;
 
 // Standard port setting for the camera component
 #define MMAL_CAMERA_PREVIEW_PORT    0
@@ -72,7 +68,7 @@ typedef struct camera_settings_s {
     int framerate;
 } camera_settings_t;
 
-typedef struct camera_s {
+struct {
     MMAL_COMPONENT_T *component;
     MMAL_PORT_T *preview_port;
     MMAL_PORT_T *video_port;
@@ -83,10 +79,7 @@ typedef struct camera_s {
     
     camera_settings_t settings;
     RASPICAM_CAMERA_PARAMETERS parameters;
-} camera_t;
-
-static app_state_t app;
-static camera_t camera;
+} camera;
 
 /**
  *  buffer header callback function for camera control
@@ -154,41 +147,83 @@ bool mmal_camera_read_frame(void) {
     if(buf = mmal_queue_get(camera.video_queue)){
         //mmal_buffer_header_mem_lock(buf);
 
-        glBindTexture(GL_TEXTURE_EXTERNAL_OES, app.cam_ytex);
-        check();
-        if(app.cam_yimg != EGL_NO_IMAGE_KHR){
-            eglDestroyImageKHR(app.egl_display, app.cam_yimg);
-            app.cam_yimg = EGL_NO_IMAGE_KHR;
-        }
-
-        app.cam_yimg = eglCreateImageKHR(app.egl_display, EGL_NO_CONTEXT, EGL_IMAGE_BRCM_MULTIMEDIA_Y, (EGLClientBuffer) buf->data, NULL);
-        check();
-        glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, app.cam_yimg);
-        check();
-/*   
-        glBindTexture(GL_TEXTURE_EXTERNAL_OES, app.cam_utex);
-        check();
-        if(app.cam_uimg != EGL_NO_IMAGE_KHR){
-            eglDestroyImageKHR(app.egl_display, app.cam_uimg);
-            app.cam_uimg = EGL_NO_IMAGE_KHR;
-        }
+        printf("size=%d, data=%p\n", buf->length, buf->data);
+        printf("data_buf[0]=%d\n", buf->data[0]);
         
-        app.cam_uimg = eglCreateImageKHR(app.egl_display, EGL_NO_CONTEXT, EGL_IMAGE_BRCM_MULTIMEDIA_U, (EGLClientBuffer) buf->data, NULL);
-        check();
-        glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, app.cam_uimg);
-        check();
-     
-        glBindTexture(GL_TEXTURE_EXTERNAL_OES, app.cam_vtex);
-        check();
-        if(app.cam_vimg != EGL_NO_IMAGE_KHR){
-            eglDestroyImageKHR(app.egl_display, app.cam_vimg);
-            app.cam_vimg = EGL_NO_IMAGE_KHR;
-        }
-        app.cam_vimg = eglCreateImageKHR(app.egl_display, EGL_NO_CONTEXT, EGL_IMAGE_BRCM_MULTIMEDIA_V, (EGLClientBuffer) buf->data, NULL);
-        check();
-        glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, app.cam_vimg);
-        check();
+        // VC only
+        unsigned int vc_handle = vcsm_vc_hdl_from_ptr(buf->data);
+        printf("handle=%x\n", vc_handle);
+        
+        
+        unsigned int busp = mem_lock(app.mailboxfd, vc_handle);
+        
+        char *vcmem = mapmem(BUS_TO_PHYS(busp), buf->length);
+        printf("data_gpu[0]=%d\n", vcmem[0]);
+        
+        unmapmem(vcmem, buf->length);
+        
+        /*
+        unsigned int ad = (busp & 0x3FFFFFFF);
+        printf("lock busp=%x\n", busp);
+        printf("lock busp=%x\n", (busp & 0x3FFFFFFF));
+        printf("lock busp=%x\n", ad);
+        printf("data=%d\n", app.vcmem[ad]);
         */
+        
+        unsigned int buss = mem_unlock(app.mailboxfd, vc_handle);
+        printf("unlock status=%x\n", buss);
+        
+        /*
+        size=1382400, data=0x73f5c000
+        handle=13
+        lock busp=fd08a000
+        unlock status=0
+        frame received
+        size=1382400, data=0x73e0a000
+        handle=21
+        lock busp=fcf36000
+        unlock status=0
+        frame received
+        size=1382400, data=0x740ae000
+        handle=6
+        lock busp=fd1dd000
+        unlock status=0
+        frame received
+        
+        Address Perm   Offset Device  Inode  Size  Rss Pss Referenced Anonymous Shared_Hugetlb Private_Hugetlb Swap SwapPss Locked Mapping
+        73f0a000 rw-s 3cf36000  00:06   1153  1352    0   0          0         0              0               0    0       0      0 vcsm
+        7405c000 rw-s 3d08a000  00:06   1153  1352    0   0          0         0              0               0    0       0      0 vcsm
+        741ae000 rw-s 3d1dd000  00:06   1153  1352    0   0          0         0              0               0    0       0      0 vcsm
+
+        fd08a000 = 0000000011111101000010001010000000000000
+        3d08a000 = 0000000000111101000010001010000000000000 = 1023975424
+                              11101110000000000000000000000
+        c0000000 = 0000000011000000000000000000000000000000
+                   0000000000100000000000000000000000000000
+                             111111111111111111111111111111
+                             
+                111100111100110110000000000000
+                111101000010001010000000000000
+                111101000111011101000000000000
+                111100000000000000000000000000
+                000001111111111111111111111111
+                
+        VC_MEM_IOC_MEM_PHYS_ADDR = 00000000
+        VC_MEM_IOC_MEM_SIZE = 3f000000
+        VC_MEM_IOC_MEM_BASE = 3dc00000 = 1035993088
+        VC_MEM_IOC_MEM_LOAD = 3dc00000
+        */
+        
+        
+        // VCSM only
+        /*
+        unsigned int vcsm_handle = vcsm_usr_handle(buf->data);
+        printf("handle=%x\n", vcsm_handle);
+        printf("lock p=%p\n", vcsm_lock(vcsm_handle));
+        vcsm_unlock_hdl(vcsm_handle);
+        printf("unlock\n");
+        */
+        
 
         //mmal_buffer_header_mem_unlock(buf);
         mmal_buffer_header_release(buf);
@@ -212,7 +247,7 @@ bool mmal_camera_read_frame(void) {
 static void mmal_camera_init() {
     camera.settings.width = 1280;
     camera.settings.height = 720;
-    camera.settings.framerate = 60;
+    camera.settings.framerate = 30;
 }
 
 static MMAL_STATUS_T mmal_camera_create() {
@@ -270,8 +305,10 @@ static MMAL_STATUS_T mmal_camera_create() {
     
     // setup preview port format
     format = camera.preview_port->format;
-    format->encoding = MMAL_ENCODING_OPAQUE;
+    format->encoding = MMAL_ENCODING_I420;
     format->encoding_variant = MMAL_ENCODING_I420;
+    //format->encoding = MMAL_ENCODING_OPAQUE;
+    //format->encoding_variant = MMAL_ENCODING_I420;
     format->es->video.width = camera.settings.width,
     format->es->video.height = camera.settings.height,
     format->es->video.crop.x = 0;
@@ -308,8 +345,10 @@ static MMAL_STATUS_T mmal_camera_create() {
 
     //setup still port format
     format = camera.still_port->format;
-    format->encoding = MMAL_ENCODING_OPAQUE;
+    format->encoding = MMAL_ENCODING_I420;
     format->encoding_variant = MMAL_ENCODING_I420;
+    //format->encoding = MMAL_ENCODING_OPAQUE;
+    //format->encoding_variant = MMAL_ENCODING_I420;
     format->es->video.width = camera.settings.width,
     format->es->video.height = camera.settings.height,
     format->es->video.crop.x = 0;
@@ -407,242 +446,84 @@ static void mmal_camera_destroy() {
         mmal_component_destroy(camera.component);
 }
 
-static void ogl_init(app_state_t *app) {
-    int32_t success = 0;
-    EGLBoolean result;
-    EGLint num_config;
+// Space at the end of memory we assume is holding code and fixed start.elf buffers
+#define VC_MEM_IMAGE 18706228
 
-    static EGL_DISPMANX_WINDOW_T nativewindow;
-
-    DISPMANX_ELEMENT_HANDLE_T dispman_element;
-    DISPMANX_DISPLAY_HANDLE_T dispman_display;
-    DISPMANX_UPDATE_HANDLE_T dispman_update;
-    VC_RECT_T dst_rect;
-    VC_RECT_T src_rect;
-
-    static const EGLint attribute_list[] = {
-        EGL_RED_SIZE,   8,
-        EGL_GREEN_SIZE, 8,
-        EGL_BLUE_SIZE,  8,
-        EGL_ALPHA_SIZE, 8,
-        EGL_DEPTH_SIZE, 16,
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-        EGL_NONE
-    };
-
-    static const EGLint context_attributes[] = {
-        EGL_CONTEXT_CLIENT_VERSION, 2,
-        EGL_NONE
-    };
-    EGLConfig config;
-
-    // get an EGL display connection
-    app->egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    assert(app->egl_display != EGL_NO_DISPLAY);
-    check();
-
-    // initialize the EGL display connection
-    result = eglInitialize(app->egl_display, NULL, NULL);
-    assert(EGL_FALSE != result);
-    check();
-
-    // get an appropriate EGL frame buffer configuration
-    result = eglChooseConfig(app->egl_display, attribute_list, &config, 1, &num_config);
-    assert(EGL_FALSE != result);
-    check();
-
-    // get an appropriate EGL frame buffer configuration
-    result = eglBindAPI(EGL_OPENGL_ES_API);
-    assert(EGL_FALSE != result);
-    check();
-
-    // create an EGL rendering context
-    app->egl_context = eglCreateContext(app->egl_display, config, EGL_NO_CONTEXT, context_attributes);
-    assert(app->egl_context != EGL_NO_CONTEXT);
-    check();
-
-    // create an EGL window surface
-    success = graphics_get_display_size(0 /* LCD */, &app->screen_width, &app->screen_height);
-    assert( success >= 0 );
-
-    dst_rect.x = 0;
-    dst_rect.y = 0;
-    dst_rect.width = app->screen_width;
-    dst_rect.height = app->screen_height;
-    
-    // NO FULLSCREEN - Top right corner
-    int rect_width = app->screen_width / 4;
-    int rect_height = app->screen_height / 4;
-    dst_rect.width = rect_width;
-    dst_rect.height = rect_height;
-    dst_rect.x = app->screen_width - rect_width;
-    dst_rect.y = 0;
-    
-    src_rect.x = 0;
-    src_rect.y = 0;
-    src_rect.width = app->screen_width << 16;
-    src_rect.height = app->screen_height << 16;        
-
-    dispman_display = vc_dispmanx_display_open( 0 /* LCD */);
-    dispman_update = vc_dispmanx_update_start( 0 );
-
-    dispman_element = vc_dispmanx_element_add ( dispman_update, dispman_display,
-    0/*layer*/, &dst_rect, 0/*src*/,
-    &src_rect, DISPMANX_PROTECTION_NONE, 0 /*alpha*/, 0/*clamp*/, 0/*transform*/);
-
-    nativewindow.element = dispman_element;
-    nativewindow.width = app->screen_width;
-    nativewindow.height = app->screen_height;
-    vc_dispmanx_update_submit_sync( dispman_update );
-
-    check();
-
-    app->egl_surface = eglCreateWindowSurface(app->egl_display, config, &nativewindow, NULL );
-    assert(app->egl_surface != EGL_NO_SURFACE);
-    check();
-
-    // connect the context to the surface
-    result = eglMakeCurrent(app->egl_display, app->egl_surface, app->egl_surface, app->egl_context);
-    assert(EGL_FALSE != result);
-    check();
-
-    // Set background color and clear buffers
-    glClearColor(0.15f, 0.25f, 0.35f, 1.0f);
-    glClear( GL_COLOR_BUFFER_BIT );
-
-    check();
+static int is_qpu_end(volatile uint32_t *inst) {
+	return (inst[0] == 0x009e7000) && (inst[1] == 0x300009e7) 
+		&& (inst[2] == 0x009e7000) && (inst[3] == 0x100009e7)
+		&& (inst[4] == 0x009e7000) && ((inst[5] == 0x100009e7) || (inst[5] == 0x500009e7));
 }
 
-static void ogl_resources_init(app_state_t *app) {    
-    const GLchar *vshader_source =
-    "attribute vec4 vertex;"
-    "varying vec2 texcoord;"
-    "void main(void) {"
-    "   gl_Position = vertex;"
-    "   texcoord = vertex.xy*0.5+0.5;"
-    "}";
-
-    const GLchar *fshader_source =
-    "#extension GL_OES_EGL_image_external : require\n"
-    "uniform samplerExternalOES cam_ytex;\n"
-    "varying vec2 texcoord;"
-    "void main(void) {"
-    //"   vec4 v = texture2D(cam_ytex, texcoord);\n"
-    //"   float b = mix(0.0, 1.0, step(0.35, v.x));"
-    //"   gl_FragColor = vec4(vec3(b), 1.0);"
-    "   gl_FragColor = texture2D(cam_ytex, texcoord);\n"
-    "}";
+static int vcdev_open() {
+    //app.vcmem = mapmem(BUS_TO_PHYS(ptr->vc+host.mem_map), size);
     
-    // Compile vertex shader
-    app->shader_vshader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(app->shader_vshader, 1, &vshader_source, 0);
-    glCompileShader(app->shader_vshader);
-    check();
+    /*
+    int fd = open("/dev/vc-mem", O_RDWR | O_SYNC);
+    if (fd == -1) {
+        printf("Unable to open /dev/vc-mem, run as sudo\n");
+        exit(EXIT_FAILURE);
+    }
 
-    // Compile fragment shader
-    app->shader_fshader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(app->shader_fshader, 1, &fshader_source, 0);
-    glCompileShader(app->shader_fshader);
-    check();
+    unsigned long address, size, base, load;
+    ioctl(fd, VC_MEM_IOC_MEM_PHYS_ADDR, &address);
+    ioctl(fd, VC_MEM_IOC_MEM_SIZE, &size);
+    ioctl(fd, VC_MEM_IOC_MEM_BASE, &base);
+    ioctl(fd, VC_MEM_IOC_MEM_LOAD, &load);
 
-    // Link shader
-    app->shader_program = glCreateProgram();
-    glAttachShader(app->shader_program, app->shader_vshader);
-    glAttachShader(app->shader_program, app->shader_fshader);
-    glLinkProgram(app->shader_program);
-    check();
-    
-    app->attr_vertex = glGetAttribLocation(app->shader_program, "vertex");
-    
-    // Vertex data
-    static const GLfloat vertex_data[] = {
-        -1.0,-1.0,1.0,1.0,
-        1.0,-1.0,1.0,1.0,
-        1.0,1.0,1.0,1.0,
-        -1.0,1.0,1.0,1.0
-    };
-    
-    // Upload vertex data to a buffer
-    glGenBuffers(1, &app->buf_vertex);
-    glBindBuffer(GL_ARRAY_BUFFER, app->buf_vertex);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertex_data), vertex_data, GL_STATIC_DRAW);
-    glVertexAttribPointer(app->attr_vertex, 4, GL_FLOAT, 0, 16, 0);
-    glEnableVertexAttribArray(app->attr_vertex);
-    check();
-    
-    // Prepare viewport
-    glViewport(0, 0, app->screen_width, app->screen_height);
-    check();
-    
-    // Prepare yuv textures
-    glGenTextures(1, &app->cam_ytex);
-    glGenTextures(1, &app->cam_utex);
-    glGenTextures(1, &app->cam_vtex);
-    
-    app->cam_yimg = EGL_NO_IMAGE_KHR;
-    app->cam_uimg = EGL_NO_IMAGE_KHR;
-    app->cam_vimg = EGL_NO_IMAGE_KHR;
-}
 
-static void ogl_destroy(app_state_t *app) {
-    eglDestroyContext(app->egl_display, app->egl_context);
-    eglDestroySurface(app->egl_display, app->egl_surface);
-    eglTerminate(app->egl_display);
-}
+	volatile uint32_t *vc = (volatile uint32_t *)mmap( 0, size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+	if (vc == (uint32_t *)-1) {
+		printf("mmap failed %s\n", strerror(errno));
+		exit(EXIT_FAILURE);
+	}
 
-static void ogl_draw(app_state_t *app){
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    printf("VC_MEM_IOC_MEM_PHYS_ADDR = %08x\n", address);
+    printf("VC_MEM_IOC_MEM_SIZE = %08x\n", size);
+    printf("VC_MEM_IOC_MEM_BASE = %08x\n", base);
+    printf("VC_MEM_IOC_MEM_LOAD = %08x\n", load);
+    printf("vc = %08x\n", vc);
 
-    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
-    check();
+    app.vcmem = vc;
+    */
+    //printf("Scanning for QPU code fragments...\n");
 
-    // draw frame START
-    glBindBuffer(GL_ARRAY_BUFFER, app->buf_vertex);
-    check();
-    
-    glUseProgram(app->shader_program);
-    check();
-    
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_EXTERNAL_OES, app->cam_ytex);
-    check();
+    /*
+    for (int i = 0; i < (size-VC_MEM_IMAGE)/4; i++) {
+        if (is_qpu_end(&vc[i])) {
+            printf("%08x:", i*4);
+            for (int j=0; j<4; j++) {
+                printf(" %08x %08x", vc[i+j*2], vc[i+j*2+1]);
+            }
+            printf("\n");
+        }
+    }
+    */
 
-    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-    check();
-
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    // draw frame END
-
-    glFlush();
-    glFinish();
-    check();
-
-    eglSwapBuffers(app->egl_display, app->egl_surface);
-    check();
+    int fd=0;
+    return fd;
 }
 
 int main(int argc, char **argv)
-{    
+{
     bcm_host_init();
-    
-    ogl_init(&app);
-    ogl_resources_init(&app);
+
+    app.vcfd = vcdev_open();
+    app.mailboxfd = mbox_open();
 
     mmal_camera_create();
 
-    time_t tstop = time(NULL) + 5;
+    time_t tstop = time(NULL) + 2;
     while (time(NULL) < tstop) {
         //wait 5 seconds
         if(mmal_camera_read_frame()){
-            //printf("frame received\n");
+            printf("frame received\n");
         }
-        
-        ogl_draw(&app);
     }
 
     mmal_camera_destroy();
 
-    ogl_destroy(&app);
+    mbox_close(app.mailboxfd);
 
     return EXIT_SUCCESS;
 }
