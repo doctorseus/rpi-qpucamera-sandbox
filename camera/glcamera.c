@@ -367,6 +367,26 @@ static MMAL_STATUS_T mmal_camera_create() {
 
     // Set up the camera_parameters to default
     raspicamcontrol_set_defaults(&camera.parameters);
+    
+    camera.parameters.ISO = 1600;
+    //camera.parameters.exposureMode = MMAL_PARAM_EXPOSUREMODE_OFF;
+    camera.parameters.exposureMode = MMAL_PARAM_EXPOSUREMODE_SPORTS;
+        
+    //camera.parameters.shutter_speed = 10000; 
+    
+    //camera.parameters.awb_gains_r = 10;
+    //camera.parameters.awb_gains_b = 10;
+    
+    /*
+    camera.parameters.exposureMode = MMAL_PARAM_EXPOSUREMODE_OFF;
+    camera.parameters.exposureCompensation = 1000;
+    camera.parameters.ISO = 2000;
+    camera.parameters.awb_gains_r = 10;      // Only have any function if AWB OFF is used.
+    camera.parameters.awb_gains_b = 1;
+    camera.parameters.awbMode = MMAL_PARAM_AWBMODE_OFF;
+    camera.parameters.shutter_speed = 10000; 
+    */
+    
     //apply all camera parameters
     raspicamcontrol_set_all_parameters(camera.component, &camera.parameters);
 
@@ -477,6 +497,16 @@ static void ogl_init(app_state_t *app) {
     dst_rect.height = rect_height;
     dst_rect.x = app->screen_width - rect_width;
     dst_rect.y = 0;
+    
+    // NO FULLSCREEN - Fixed resolution, top right corner
+    /*
+    rect_width = 640;
+    rect_height = 480;
+    dst_rect.width = rect_width;
+    dst_rect.height = rect_height;
+    dst_rect.x = app->screen_width - rect_width;
+    dst_rect.y = 0;
+    */
     
     src_rect.x = 0;
     src_rect.y = 0;
@@ -630,7 +660,7 @@ int main(int argc, char **argv)
 
     mmal_camera_create();
 
-    time_t tstop = time(NULL) + 5;
+    time_t tstop = time(NULL) + 60;
     while (time(NULL) < tstop) {
         //wait 5 seconds
         if(mmal_camera_read_frame()){
