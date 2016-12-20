@@ -19,42 +19,42 @@ typedef struct qpu_memory_map_s {
 typedef struct qpu_handle_s {
     int mb;
     unsigned int mem_handle;
+    unsigned int vc_msg;
+    unsigned int arm_mem_size;
+    qpu_memory_map_t *arm_mem_map;
 } qpu_handle_t;
 
-static bool camera_read_frame(mmal_camera_handle_t *handle) {
+unsigned int vcsm_vc_hdl_from_ptr( void *usr_ptr );
+void qpu_execute(qpu_handle_t *handle, unsigned int frameptr);
+
+static bool camera_read_frame(mmal_camera_handle_t *camera_handle, qpu_handle_t *qpu_handle) {
     MMAL_BUFFER_HEADER_T* buf;
-    if(buf = mmal_queue_get(handle->video_queue)){
+    if(buf = mmal_queue_get(camera_handle->video_queue)){
         //mmal_buffer_header_mem_lock(buf);
+
+
 
         printf("size=%d, data=%p\n", buf->length, buf->data);
         printf("data_buf[0]=%d\n", buf->data[0]);
             
-        /*
-        // VC only
         unsigned int vc_handle = vcsm_vc_hdl_from_ptr(buf->data);
-        printf("handle=%x\n", vc_handle);
+        unsigned int frameptr = mem_lock(qpu_handle->mb, vc_handle);
         
+        qpu_execute(qpu_handle, frameptr);
         
-        unsigned int busp = mem_lock(app.mailboxfd, vc_handle);
-        
-        char *vcmem = mapmem(BUS_TO_PHYS(busp), buf->length);
-        printf("data_gpu[0]=%d\n", vcmem[0]);
-        
-        unmapmem(vcmem, buf->length);
-        
-        unsigned int buss = mem_unlock(app.mailboxfd, vc_handle);
-        printf("unlock status=%x\n", buss);
-        */
+        mem_unlock(qpu_handle->mb, vc_handle);
+
+
 
         //mmal_buffer_header_mem_unlock(buf);
         mmal_buffer_header_release(buf);
 
-        if(handle->preview_port->is_enabled){
+        if(camera_handle->preview_port->is_enabled){
             MMAL_STATUS_T status;
             MMAL_BUFFER_HEADER_T *new_buffer;
-            new_buffer = mmal_queue_get(handle->video_pool->queue);
+            new_buffer = mmal_queue_get(camera_handle->video_pool->queue);
             if (new_buffer)
-                status = mmal_port_send_buffer(handle->preview_port, new_buffer);
+                status = mmal_port_send_buffer(camera_handle->preview_port, new_buffer);
             if (!new_buffer || status != MMAL_SUCCESS)
                 fprintf(stderr, "Unable to return a buffer to the video port\n\n");
         }
@@ -107,10 +107,7 @@ void qpu_init_kernel(qpu_handle_t *handle, char *filename) {
     
     // Map memory into ARM (GPU MEMORY LEAK HERE IF mapmem FAILS!)
     void *arm_ptr = mapmem(BUS_TO_PHYS(ptr + host.mem_map), size);
-    
-    printf("GPU memory(addr=%p) locked\n", ptr);
-    
-    
+
     // Map struct to memory
     qpu_memory_map_t *arm_map = (qpu_memory_map_t *)arm_ptr;
     memset(arm_map, 0x0, sizeof(qpu_memory_map_t));
@@ -123,13 +120,69 @@ void qpu_init_kernel(qpu_handle_t *handle, char *filename) {
     // Copy shader code to memory
     memcpy(arm_map->code, qpu_code, code_words * sizeof(unsigned int));
     
-    // Unmap memory
-    unmapmem(arm_ptr, size);
+    // Set pointers
+    arm_map->uniforms[0] = BUFFER_SIZE;
+    arm_map->uniforms[1] = vc_inputs;
+    arm_map->uniforms[2] = vc_results;
+    arm_map->msg[0] = vc_uniforms;
+    arm_map->msg[1] = vc_code;
+    
+    for(int i = 0; i < BUFFER_SIZE; i++)
+        arm_map->inputs[i] = (i+1)*16 | 0xee000000;
+
+    handle->vc_msg = vc_msg;
+    handle->arm_mem_size = size;
+    handle->arm_mem_map = arm_map;
+
+    // Unlock memory
+    mem_unlock(handle->mb, handle->mem_handle);
+}
+
+void qpu_execute(qpu_handle_t *handle, unsigned int frameptr) {
+    struct timespec start, stop;
+    double accum;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+
+
+    // Enable QPU
+    if (qpu_enable(handle->mb, 1)) {
+        fprintf(stderr, "QPU enable failed.\n");
+        exit(EXIT_FAILURE);
+    }
+    
+    // Lock memory
+    mem_lock(handle->mb, handle->mem_handle);
+    
+    // Set pointers to camera frame
+    handle->arm_mem_map->uniforms[1] = frameptr;
+    
+    unsigned ret = execute_qpu(handle->mb, 1, handle->vc_msg, GPU_FFT_NO_FLUSH, GPU_FFT_TIMEOUT);
+    
+    // Disable QPU
+    if (qpu_enable(handle->mb, 0)) {
+        fprintf(stderr, "QPU enable failed.\n");
+        exit(EXIT_FAILURE);
+    }
+    
+    // Time and output
+    clock_gettime(CLOCK_MONOTONIC_RAW, &stop);   
+    accum = 1000 / (( stop.tv_sec - start.tv_sec ) + ( stop.tv_nsec - start.tv_nsec ) / 1000000.0);
+    printf( "fps = %lf\n", accum);
+    
+    printf("ret=%x\n", ret);    
+    for (int j=0; j < BUFFER_SIZE; j++) {
+        printf("%08x ", handle->arm_mem_map->results[j]);
+        if((j+1) % 16 == 0)
+            printf("\n");
+    }
+    
     // Unlock memory
     mem_unlock(handle->mb, handle->mem_handle);
 }
 
 void qpu_destroy(qpu_handle_t *handle){
+    // Unmap ARM memory
+    unmapmem(handle->arm_mem_map, handle->arm_mem_size);
     // Free GPU memory
     mem_free(handle->mb, handle->mem_handle);
 }
@@ -151,15 +204,14 @@ int main(int argc, char **argv) {
     mmal_camera_handle_t camera_handle;
     mmal_camera_init(&camera_handle);
     mmal_camera_create(&camera_handle);
-    
+        
     time_t tstop = time(NULL) + 2;
     while (time(NULL) < tstop) {
         //wait 5 seconds
-        if(camera_read_frame(&camera_handle)){
+        if(camera_read_frame(&camera_handle, &qpu_handle)){
             printf("frame received\n");
         }
     }
-    
     
     mmal_camera_destroy(&camera_handle);
     qpu_destroy(&qpu_handle);
