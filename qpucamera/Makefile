@@ -8,7 +8,7 @@ INCLUDES	=	-I./\
 				-I/opt/vc/include/
 
 CAM_INCLUDES	= -I../camera/	
-CAM_SOURCES		= ../camera/RaspiCamControl.c ../camera/RaspiCLI.c
+CAM_SOURCES		= ../camera/RaspiCamControl.c ../camera/RaspiCLI.c ../camera/tga.c
 
 LDFLAGS			= -L/opt/vc/lib/ -lmmal -lmmal_core -lmmal_util -lvcos -lbcm_host -lbrcmEGL -lbrcmGLESv2 -lvcsm -ldl
 

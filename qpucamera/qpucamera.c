@@ -4,6 +4,7 @@
 #include "mmal_camera.h"
 #include "qpu.h"
 #include "mailbox.h"
+#include "tga.h"
 
 #define MAX_CODE_SIZE   8192
 #define BUFFER_SIZE     16*64
@@ -24,8 +25,26 @@ typedef struct qpu_handle_s {
     qpu_memory_map_t *arm_mem_map;
 } qpu_handle_t;
 
+static bool stop = false;
+static unsigned int frames = 0;
+
 unsigned int vcsm_vc_hdl_from_ptr( void *usr_ptr );
 void qpu_execute(qpu_handle_t *handle, unsigned int frameptr);
+
+static void camera_data_to_rgba(char *frame_buffer, unsigned int frame_size, char *image_buffer, unsigned int image_size) {
+    uint8_t* in = frame_buffer;
+    uint8_t* out = image_buffer;
+    uint8_t* end = image_buffer + image_size;
+
+    while (out < end) {
+        out[0] = in[0];
+        out[1] = in[0];
+        out[2] = in[0];
+        out[3] = 0xff;
+        in += 1;
+        out += 4;
+    }
+}
 
 static bool camera_read_frame(mmal_camera_handle_t *camera_handle, qpu_handle_t *qpu_handle) {
     MMAL_BUFFER_HEADER_T* buf;
@@ -37,14 +56,27 @@ static bool camera_read_frame(mmal_camera_handle_t *camera_handle, qpu_handle_t 
         printf("size=%d, data=%p\n", buf->length, buf->data);
         printf("data_buf[0]=%d\n", buf->data[0]);
             
+        if(frames >= 15){
+            
         unsigned int vc_handle = vcsm_vc_hdl_from_ptr(buf->data);
         unsigned int frameptr = mem_lock(qpu_handle->mb, vc_handle);
-        
         qpu_execute(qpu_handle, frameptr);
-        
         mem_unlock(qpu_handle->mb, vc_handle);
 
 
+        // Write output debug image
+        int image_width = 1280;
+        int image_height = 720;
+        int image_size = image_width * image_height * 4;
+        char image_buffer[image_size];
+        FILE* output_file = fopen("output.tga", "w");
+        camera_data_to_rgba(buf->data, buf->length, image_buffer, image_size);
+        write_tga(output_file, image_width, image_height, image_buffer, image_size);
+        fclose(output_file);
+
+        stop = true;
+        }
+        frames++;
 
         //mmal_buffer_header_mem_unlock(buf);
         mmal_buffer_header_release(buf);
@@ -205,8 +237,8 @@ int main(int argc, char **argv) {
     mmal_camera_init(&camera_handle);
     mmal_camera_create(&camera_handle);
         
-    time_t tstop = time(NULL) + 2;
-    while (time(NULL) < tstop) {
+    time_t tstop = time(NULL) + 5;
+    while (time(NULL) < tstop && !stop) {
         //wait 5 seconds
         if(camera_read_frame(&camera_handle, &qpu_handle)){
             printf("frame received\n");
