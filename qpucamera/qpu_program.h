@@ -27,7 +27,22 @@ typedef struct qpu_program_handle_s {
 bool qpu_program_create(qpu_program_handle_t *handle, int mailboxfd);
 void qpu_program_load_code(qpu_program_handle_t *handle, unsigned int *code, int words);
 void qpu_program_load_file(qpu_program_handle_t *handle, char *filename);
-void qpu_program_execute(qpu_program_handle_t *handle);
+void qpu_program_execute(qpu_program_handle_t *handle, unsigned int *uniforms, int words);
 void qpu_program_destroy(qpu_program_handle_t *handle);
+
+typedef struct qpu_buffer_handle_s {
+    int mb;
+    
+    unsigned int mem_handle;    // GPU memory handle
+    /*
+    unsigned int arm_mem_size;          // ARM memory size
+    qpu_program_mmap_t *arm_mem_map;    // ARM memory ptr
+    */
+} qpu_buffer_handle_t;
+
+void qpu_buffer_create(qpu_buffer_handle_t *handle, unsigned size, unsigned align);
+void qpu_buffer_lock(qpu_buffer_handle_t *handle);
+void qpu_buffer_unlock(qpu_buffer_handle_t *handle);
+void qpu_buffer_destroy(qpu_buffer_handle_t *handle);
 
 #endif

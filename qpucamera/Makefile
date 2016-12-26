@@ -17,6 +17,7 @@ qpucamera: clean asm
 
 asm: qpucamera_kernel.asm
 	vc4asm -V -o qpucamera_kernel.bin qpucamera_kernel.asm ../qpu/vc4.qinc
+	vc4asm -V -o qpucamera_kernel_tmu.bin qpucamera_kernel_tmu.asm ../qpu/vc4.qinc
 
 clean:
 	rm -f qpucamera

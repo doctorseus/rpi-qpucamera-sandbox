@@ -86,7 +86,7 @@ void qpu_program_load_file(qpu_program_handle_t *handle, char *filename) {
     qpu_program_load_code(handle, qpu_code, code_words);
 }
 
-void qpu_program_execute(qpu_program_handle_t *handle) {
+void qpu_program_execute(qpu_program_handle_t *handle, unsigned int *uniforms, int words) {
     struct timespec start, stop;
     double accum;
     clock_gettime(CLOCK_MONOTONIC_RAW, &start);
@@ -101,10 +101,8 @@ void qpu_program_execute(qpu_program_handle_t *handle) {
     // Lock memory
     mem_lock(handle->mb, handle->mem_handle);
     
-    // Set pointers to camera frame
-    handle->arm_mem_map->uniforms[2] = handle->vc_msg;
-    handle->arm_mem_map->uniforms[1] = handle->vc_msg;
-    handle->arm_mem_map->uniforms[0] = handle->vc_msg;
+    // Copy uniforms
+    memcpy(handle->arm_mem_map->uniforms, uniforms, words * sizeof(unsigned int));
     
     unsigned ret = execute_qpu(handle->mb, 1, handle->vc_msg, GPU_FFT_NO_FLUSH, GPU_FFT_TIMEOUT);
     
@@ -129,4 +127,20 @@ void qpu_program_destroy(qpu_program_handle_t *handle) {
     unmapmem(handle->arm_mem_map, handle->arm_mem_size);
     // Free GPU memory
     mem_free(handle->mb, handle->mem_handle);
+}
+
+void qpu_buffer_create(qpu_buffer_handle_t *handle, unsigned size, unsigned align) {
+    
+}
+
+void qpu_buffer_lock(qpu_buffer_handle_t *handle) {
+    
+}
+
+void qpu_buffer_unlock(qpu_buffer_handle_t *handle) {
+    
+}
+
+void qpu_buffer_destroy(qpu_buffer_handle_t *handle) {
+    
 }

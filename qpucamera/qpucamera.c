@@ -228,16 +228,22 @@ int main(int argc, char **argv) {
     
     bcm_host_init();
     int mb = mbox_open();
-        
+      
+
     qpu_program_handle_t qpu_program_handle;
     qpu_program_create(&qpu_program_handle, mb);
     qpu_program_load_file(&qpu_program_handle, argv[1]);
     
-    qpu_program_execute(&qpu_program_handle);
+    unsigned int uniforms[3];
+    uniforms[0] = 0x73e0a000;
+    uniforms[1] = 0x73e0a000;
+    uniforms[2] = 0x73e0a000;
+    qpu_program_execute(&qpu_program_handle, uniforms, 3);
     
     qpu_program_destroy(&qpu_program_handle);
     printf("EXIT\n");
     return 0;
+
     
     qpu_handle_t qpu_handle;
     qpu_handle.mb = mb;
