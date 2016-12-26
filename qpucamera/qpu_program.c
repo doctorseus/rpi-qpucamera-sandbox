@@ -129,18 +129,45 @@ void qpu_program_destroy(qpu_program_handle_t *handle) {
     mem_free(handle->mb, handle->mem_handle);
 }
 
-void qpu_buffer_create(qpu_buffer_handle_t *handle, unsigned size, unsigned align) {
+bool qpu_buffer_create(qpu_buffer_handle_t *handle, int mb, unsigned size, unsigned align) {
+    handle->mb = mb;
+    handle->mem_size = size;
     
+    // Get host info
+    struct GPU_FFT_HOST host;
+    if (gpu_fft_get_host_info(&host)) {
+        fprintf(stderr, "QPU fetch of host information (Rpi version, etc.) failed.\n");
+        return false;
+    }
+    
+    // Allocate GPU memory    
+    handle->mem_handle = mem_alloc(handle->mb, size, align, host.mem_flg);
+    if (!handle->mem_handle) {
+        fprintf(stderr, "Unable to allocate %d bytes of GPU memory", size);
+        return false;
+    }
+    
+    // Get physical memory pointer
+    handle->mem_ptr = qpu_buffer_lock(handle);
+    qpu_buffer_unlock(handle);
+    
+    // Map memory into ARM (GPU MEMORY LEAK HERE IF mapmem FAILS!)
+    handle->arm_mem_ptr = mapmem(BUS_TO_PHYS(handle->mem_ptr + host.mem_map), size);
 }
 
-void qpu_buffer_lock(qpu_buffer_handle_t *handle) {
-    
+unsigned int qpu_buffer_lock(qpu_buffer_handle_t *handle) {
+    // Lock memory
+    return mem_lock(handle->mb, handle->mem_handle);
 }
 
 void qpu_buffer_unlock(qpu_buffer_handle_t *handle) {
-    
+    // Unlock memory
+    mem_unlock(handle->mb, handle->mem_handle);
 }
 
 void qpu_buffer_destroy(qpu_buffer_handle_t *handle) {
-    
+    // Unmap ARM memory
+    unmapmem(handle->arm_mem_ptr, handle->mem_size);
+    // Free GPU memory
+    mem_free(handle->mb, handle->mem_handle);
 }

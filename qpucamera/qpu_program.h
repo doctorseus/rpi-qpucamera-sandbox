@@ -33,15 +33,15 @@ void qpu_program_destroy(qpu_program_handle_t *handle);
 typedef struct qpu_buffer_handle_s {
     int mb;
     
+    unsigned int mem_size;      // Memory size in bytes
     unsigned int mem_handle;    // GPU memory handle
-    /*
-    unsigned int arm_mem_size;          // ARM memory size
-    qpu_program_mmap_t *arm_mem_map;    // ARM memory ptr
-    */
+    unsigned int mem_ptr;       // GPU physical memory ptr
+
+    void *arm_mem_ptr;          // ARM memory ptr
 } qpu_buffer_handle_t;
 
-void qpu_buffer_create(qpu_buffer_handle_t *handle, unsigned size, unsigned align);
-void qpu_buffer_lock(qpu_buffer_handle_t *handle);
+bool qpu_buffer_create(qpu_buffer_handle_t *handle, int mb, unsigned size, unsigned align);
+unsigned int qpu_buffer_lock(qpu_buffer_handle_t *handle);
 void qpu_buffer_unlock(qpu_buffer_handle_t *handle);
 void qpu_buffer_destroy(qpu_buffer_handle_t *handle);
 
