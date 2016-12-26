@@ -9,63 +9,39 @@
 bool qpu_program_create(qpu_program_handle_t *handle, int mb) {
     handle->mb = mb;
     
-    // Get host info
-    struct GPU_FFT_HOST host;
-    if (gpu_fft_get_host_info(&host)) {
-        fprintf(stderr, "QPU fetch of host information (Rpi version, etc.) failed.\n");
-        return false;
-    }
-
-    printf("Host:\n");
-    printf("mem_flg=%x\n", host.mem_flg);
-    printf("mem_map=%x\n", host.mem_map);
-    printf("peri_addr=%x\n", host.peri_addr);
-    printf("peri_size=%x\n", host.peri_size);
-    
     // Allocate GPU memory
     unsigned int size = sizeof(qpu_program_mmap_t);
+    qpu_buffer_create(&handle->buffer_handle, mb, size, 4096);
     
-    handle->mem_handle = mem_alloc(handle->mb, size, 4096, host.mem_flg);
-    if (!handle->mem_handle) {
-        fprintf(stderr, "Unable to allocate %d bytes of GPU memory", size);
-        return false;
-    }
-
     // Lock memory
-    unsigned int ptr = mem_lock(handle->mb, handle->mem_handle);
-
-    // Map memory into ARM (GPU MEMORY LEAK HERE IF mapmem FAILS!)
-    void *arm_ptr = mapmem(BUS_TO_PHYS(ptr + host.mem_map), size);
-    
+    unsigned int ptr = qpu_buffer_lock(&handle->buffer_handle);
 
     // Map struct to memory
-    qpu_program_mmap_t *arm_map = (qpu_program_mmap_t *)arm_ptr;
+    qpu_program_mmap_t *arm_map = (qpu_program_mmap_t *) handle->buffer_handle.arm_mem_ptr;
     memset(arm_map, 0x0, sizeof(qpu_program_mmap_t));
 
     unsigned vc_uniforms = ptr + offsetof(qpu_program_mmap_t, uniforms);
     unsigned vc_code = ptr + offsetof(qpu_program_mmap_t, code);
     unsigned vc_msg = ptr + offsetof(qpu_program_mmap_t, msg);
-        
 
     // Set pointers
     arm_map->msg[0] = vc_uniforms;
     arm_map->msg[1] = vc_code;
-
-
+    
     handle->vc_msg = vc_msg;
-    handle->arm_mem_size = size;
-    handle->arm_mem_map = arm_map;
-
-
+    handle->buffer_arm_mmap = arm_map;
+    
     // Unlock memory
-    mem_unlock(handle->mb, handle->mem_handle);
+    qpu_buffer_unlock(&handle->buffer_handle);
     
     return true;    
 }
 
 void qpu_program_load_code(qpu_program_handle_t *handle, unsigned int *code, int words) {
     // Copy shader code to memory
-    memcpy(handle->arm_mem_map->code, code, words * sizeof(unsigned int));
+    qpu_buffer_lock(&handle->buffer_handle);
+    memcpy(handle->buffer_arm_mmap->code, code, words * sizeof(unsigned int));
+    qpu_buffer_unlock(&handle->buffer_handle);
 }
 
 static int load_file(const char *fname, unsigned int* buffer, int len) {
@@ -90,8 +66,7 @@ void qpu_program_execute(qpu_program_handle_t *handle, unsigned int *uniforms, i
     struct timespec start, stop;
     double accum;
     clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-
-
+    
     // Enable QPU
     if (qpu_enable(handle->mb, 1)) {
         fprintf(stderr, "QPU enable failed.\n");
@@ -99,10 +74,10 @@ void qpu_program_execute(qpu_program_handle_t *handle, unsigned int *uniforms, i
     }
     
     // Lock memory
-    mem_lock(handle->mb, handle->mem_handle);
+    qpu_buffer_lock(&handle->buffer_handle);
     
     // Copy uniforms
-    memcpy(handle->arm_mem_map->uniforms, uniforms, words * sizeof(unsigned int));
+    memcpy(handle->buffer_arm_mmap->uniforms, uniforms, words * sizeof(unsigned int));
     
     unsigned ret = execute_qpu(handle->mb, 1, handle->vc_msg, GPU_FFT_NO_FLUSH, GPU_FFT_TIMEOUT);
     
@@ -119,14 +94,11 @@ void qpu_program_execute(qpu_program_handle_t *handle, unsigned int *uniforms, i
     printf("ret=%x\n", ret);
     
     // Unlock memory
-    mem_unlock(handle->mb, handle->mem_handle);
+    qpu_buffer_unlock(&handle->buffer_handle);
 }
 
 void qpu_program_destroy(qpu_program_handle_t *handle) {
-    // Unmap ARM memory
-    unmapmem(handle->arm_mem_map, handle->arm_mem_size);
-    // Free GPU memory
-    mem_free(handle->mb, handle->mem_handle);
+    qpu_buffer_destroy(&handle->buffer_handle);
 }
 
 bool qpu_buffer_create(qpu_buffer_handle_t *handle, int mb, unsigned size, unsigned align) {
