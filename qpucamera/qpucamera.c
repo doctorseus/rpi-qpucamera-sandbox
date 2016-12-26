@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include "bcm_host.h"
 #include "mmal_camera.h"
+#include "qpu_program.h"
 #include "qpu.h"
 #include "mailbox.h"
 #include "tga.h"
@@ -227,11 +228,20 @@ int main(int argc, char **argv) {
     
     bcm_host_init();
     int mb = mbox_open();
+        
+    qpu_program_handle_t qpu_program_handle;
+    qpu_program_create(&qpu_program_handle, mb);
+    qpu_program_load_file(&qpu_program_handle, argv[1]);
+    
+    qpu_program_execute(&qpu_program_handle);
+    
+    qpu_program_destroy(&qpu_program_handle);
+    printf("EXIT\n");
+    return 0;
     
     qpu_handle_t qpu_handle;
     qpu_handle.mb = mb;
     qpu_init_kernel(&qpu_handle, argv[1]);
-    
 
     mmal_camera_handle_t camera_handle;
     mmal_camera_init(&camera_handle);
