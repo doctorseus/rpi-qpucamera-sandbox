@@ -4,7 +4,7 @@
 #include "qpu.h"
 #include <stdbool.h>
 
-#define MAX_CODE_SIZE   8192
+#define MAX_CODE_SIZE   (8192*16)
 #define MAX_UNIFORMS    3
 
 typedef struct qpu_buffer_handle_s {
