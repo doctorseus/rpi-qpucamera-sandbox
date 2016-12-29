@@ -4,10 +4,14 @@
 
 #define VIDEO_WIDTH     1280
 #define VIDEO_HEIGHT    720
-#define VIDEO_FRAMERATE 30
+#define VIDEO_FRAMERATE 10
+
+static FILE *vfile;
 
 static void mmal_video_encoding_init(mmal_video_encoding_handle_t *handle) {
     memset(handle, 0x0, sizeof(mmal_video_encoding_handle_t));
+    
+    vfile = fopen("testvideo.h264", "w");
 }
 
 static void encoder_input_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
@@ -15,16 +19,39 @@ static void encoder_input_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_
     mmal_buffer_header_release(buffer);
 }
 
-static bool w = false;
+//static bool w = false;
 
 static void encode_frame_h264(mmal_video_encoding_handle_t *handle, MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     fprintf(stderr, "dataLength=%d\n", buffer->length);
+    
+    if(buffer->flags & MMAL_BUFFER_HEADER_FLAG_CONFIG) {
+        fprintf(stderr, "HEADER\n");
+        
+        fwrite(buffer->data, sizeof(char), buffer->length, vfile);
+    } else if((buffer->flags & MMAL_BUFFER_HEADER_FLAG_CODECSIDEINFO)) {
+        fprintf(stderr, "MOTION\n");
+    } else {
+        fprintf(stderr, "DATA\n");
+        
+        if(buffer->flags & MMAL_BUFFER_HEADER_FLAG_KEYFRAME) {
+            fprintf(stderr, "#KEYFRAME\n");
+        }
+        
+        if(buffer->flags & MMAL_BUFFER_HEADER_FLAG_FRAME_END) {
+            fprintf(stderr, "#END\n");
+        }
+        
+        fwrite(buffer->data, sizeof(char), buffer->length, vfile);
+    }
+    
+    /*
     if(buffer->length > 0 && !w) {
         FILE *imgfile = fopen("debugimg.jpg", "w");
         fwrite(buffer->data, sizeof(char), buffer->length, imgfile);
         fclose(imgfile);   
         w = true;
     }
+    */
 }
 
 static void encoder_output_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
@@ -128,6 +155,14 @@ MMAL_STATUS_T mmal_video_encoding_create(mmal_video_encoding_handle_t *handle) {
     printf("encoder_input->buffer_num: %d\n", handle->encoder_input->buffer_num);
     printf("encoder_output->buffer_size: %d\n", handle->encoder_output->buffer_size);
     printf("encoder_output->buffer_num: %d\n", handle->encoder_output->buffer_num);
+    
+    /*
+    status = mmal_port_parameter_set_boolean(handle->encoder_output, MMAL_PARAMETER_VIDEO_ENCODE_INLINE_VECTORS, true);
+    if (status != MMAL_SUCCESS) {
+        fprintf(stderr, "Error: unable to set MMAL_PARAMETER_VIDEO_ENCODE_INLINE_VECTORS on output port (%u)\n", status);
+        goto error;
+    }
+    */
 
     // Create input buffer pool
     handle->encoder_input_pool = (MMAL_POOL_T *) mmal_port_pool_create(handle->encoder_input, handle->encoder_input->buffer_num, handle->encoder_input->buffer_size);
@@ -181,6 +216,7 @@ MMAL_STATUS_T mmal_video_encoding_create(mmal_video_encoding_handle_t *handle) {
 }
 
 void mmal_video_encoding_destroy(mmal_video_encoding_handle_t *handle) {
+    fclose(vfile);
     if (handle->component) {
         mmal_port_disable(handle->encoder_input);
         mmal_port_disable(handle->encoder_output);

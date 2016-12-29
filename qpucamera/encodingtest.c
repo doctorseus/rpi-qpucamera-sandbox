@@ -20,7 +20,7 @@ int main(int argc, char **argv) {
     mmal_video_encoding_handle_t handle;
     mmal_video_encoding_create(&handle);
     
-    time_t tstop = time(NULL) + 2;
+    time_t tstop = time(NULL) + 5;
     while (time(NULL) < tstop) {
         //wait 5 seconds
         /*
