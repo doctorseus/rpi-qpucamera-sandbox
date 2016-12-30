@@ -2,9 +2,12 @@
 #include <stdbool.h>
 #include "bcm_host.h"
 #include "mmal_camera.h"
+#include "mmal_video_encoding.h"
 #include "qpu_program.h"
 #include "mailbox.h"
 #include "tga.h"
+
+//#define RECORD_VIDEO
 
 unsigned int vcsm_vc_hdl_from_ptr( void *usr_ptr );
 
@@ -12,10 +15,10 @@ static void convert_i420_to_rgba(char *frame_buffer, char *image_buffer, unsigne
 static void dump_frame_to_tga(char *frame_buffer, unsigned int frame_size, int image_width, int image_height, char *filename);
 static void dump_frame_to_file(char *frame_buffer, unsigned int frame_size, char *filename);
 
-static void camera_progress_frame(qpu_program_handle_t *qpu_handle, unsigned int frameptr, bool debug_frame) {
+static void camera_progress_frame(mmal_video_encoding_handle_t *encoding_handle, qpu_program_handle_t *qpu_handle, unsigned int frameptr, bool debug_frame) {
     // Create output buffer
     qpu_buffer_handle_t output_buffer;
-    qpu_buffer_create(&output_buffer, qpu_handle->mb, 1280*720, 4096);
+    qpu_buffer_create(&output_buffer, qpu_handle->mb, 1280*720*2, 4096);
     qpu_buffer_lock(&output_buffer);
     
     // Execute QPU program
@@ -37,11 +40,29 @@ static void camera_progress_frame(qpu_program_handle_t *qpu_handle, unsigned int
         dump_frame_to_tga(output_buffer.arm_mem_ptr, 1280*720, 1280, 720, "output.tga");
     }
     
+    /*
+    // Send output buffer to video encoder
+    MMAL_BUFFER_HEADER_T *encoding_buffer = mmal_queue_wait(encoding_handle->encoder_input_pool->queue);
+    if (encoding_buffer) {
+        mmal_buffer_header_mem_lock(encoding_buffer);
+
+        encoding_buffer->length = 1382400;
+        memset(encoding_buffer->data, 0x80, 1382400); // Reset UV planes to get a w/b video
+        memcpy(encoding_buffer->data, output_buffer.arm_mem_ptr, 1280*720);
+
+        mmal_buffer_header_mem_unlock(encoding_buffer);
+        fprintf(stderr, "- mmal_port_send_buffer\n");
+        if (mmal_port_send_buffer(encoding_handle->encoder_input, encoding_buffer) != MMAL_SUCCESS) {
+            fprintf(stderr, "ERROR: Unable to send buffer \n");
+        }
+    }
+    */
+        
     qpu_buffer_unlock(&output_buffer);
     qpu_buffer_destroy(&output_buffer);
 }
 
-static bool camera_read_frame(mmal_camera_handle_t *camera_handle, qpu_program_handle_t *qpu_handle, bool debug_frame) {
+static bool camera_read_frame(mmal_camera_handle_t *camera_handle, mmal_video_encoding_handle_t *encoding_handle, qpu_program_handle_t *qpu_handle, bool debug_frame) {
     MMAL_BUFFER_HEADER_T* buf;
     if(buf = mmal_queue_get(camera_handle->video_queue)){
         
@@ -56,8 +77,25 @@ static bool camera_read_frame(mmal_camera_handle_t *camera_handle, qpu_program_h
             dump_frame_to_file(buf->data, buf->length, "input.data");   
         }
         
+        /*   
+        // Send camera frame to video encoder
+        MMAL_BUFFER_HEADER_T *output_buffer = mmal_queue_wait(encoding_handle->encoder_input_pool->queue);
+        if (output_buffer) {
+            mmal_buffer_header_mem_lock(output_buffer);
+
+            output_buffer->length = buf->length;
+            memcpy(output_buffer->data, buf->data, buf->length);
+
+            mmal_buffer_header_mem_unlock(output_buffer);
+            fprintf(stderr, "- mmal_port_send_buffer\n");
+            if (mmal_port_send_buffer(encoding_handle->encoder_input, output_buffer) != MMAL_SUCCESS) {
+                fprintf(stderr, "ERROR: Unable to send buffer \n");
+            }
+        }
+        */
+        
         // Progress camera frame
-        camera_progress_frame(qpu_handle, frameptr, debug_frame);
+        camera_progress_frame(encoding_handle, qpu_handle, frameptr, debug_frame);
         
         // Unlock and release frame buffer
         mem_unlock(qpu_handle->mb, vc_handle);
@@ -91,6 +129,9 @@ int main(int argc, char **argv) {
     qpu_program_handle_t qpu_handle;
     qpu_program_create(&qpu_handle, mb);
     qpu_program_load_file(&qpu_handle, argv[1]);
+    
+    mmal_video_encoding_handle_t encoding_handle;
+    // mmal_video_encoding_create(&encoding_handle);
 
     mmal_camera_handle_t camera_handle;
     mmal_camera_init(&camera_handle);
@@ -100,12 +141,13 @@ int main(int argc, char **argv) {
     time_t tstop = time(NULL) + 5;
     while (time(NULL) < tstop && frame_counter < 15) {
         // run for 5 seconds or 15 frames
-        if(camera_read_frame(&camera_handle, &qpu_handle, frame_counter == 14)){
+        if(camera_read_frame(&camera_handle, &encoding_handle, &qpu_handle, frame_counter == 14)){
             frame_counter++;
         }
     }
     
     mmal_camera_destroy(&camera_handle);
+    // mmal_video_encoding_destroy(&encoding_handle);
     qpu_program_destroy(&qpu_handle);
 
 

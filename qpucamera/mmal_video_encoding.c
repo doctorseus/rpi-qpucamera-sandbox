@@ -143,7 +143,8 @@ MMAL_STATUS_T mmal_video_encoding_create(mmal_video_encoding_handle_t *handle) {
 
     // We need to set the frame rate on output to 0, to ensure it gets
     // updated correctly from the input framerate when port connected
-    handle->encoder_output->format->es->video.frame_rate.num = 0;
+    //handle->encoder_output->format->es->video.frame_rate.num = 0;
+    handle->encoder_output->format->es->video.frame_rate.num = handle->settings.framerate; // Try to set it fix framerate
     handle->encoder_output->format->es->video.frame_rate.den = 1;
 
     // Commit the port changes to the output port

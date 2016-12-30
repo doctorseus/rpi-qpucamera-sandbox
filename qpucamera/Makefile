@@ -13,7 +13,7 @@ CAM_SOURCES		= ../camera/RaspiCamControl.c ../camera/RaspiCLI.c ../camera/tga.c
 LDFLAGS			= -L/opt/vc/lib/ -lmmal -lmmal_core -lmmal_util -lvcos -lbcm_host -lbrcmEGL -lbrcmGLESv2 -lvcsm -ldl
 
 qpucamera: clean asm
-	$(CC) $(INCLUDES) $(CAM_INCLUDES) $(CAM_SOURCES) $(CFLAGS) $(LDFLAGS) -I/opt/vc/src/hello_pi/hello_fft /opt/vc/src/hello_pi/hello_fft/mailbox.c -I../qpu/ ../qpu/qpu.c mmal_camera.c qpucamera.c qpu_program.c -o $@
+	$(CC) $(INCLUDES) $(CAM_INCLUDES) $(CAM_SOURCES) $(CFLAGS) $(LDFLAGS) -I/opt/vc/src/hello_pi/hello_fft /opt/vc/src/hello_pi/hello_fft/mailbox.c -I../qpu/ ../qpu/qpu.c mmal_camera.c mmal_video_encoding.c qpucamera.c qpu_program.c -o $@
 
 encodingtest: clean
 	$(CC)  $(INCLUDES) $(CAM_INCLUDES) $(CAM_SOURCES) $(CFLAGS) $(LDFLAGS) -I/opt/vc/src/hello_pi/hello_fft /opt/vc/src/hello_pi/hello_fft/mailbox.c -I../qpu/ ../qpu/qpu.c mmal_camera.c mmal_video_encoding.c encodingtest.c -o $@
