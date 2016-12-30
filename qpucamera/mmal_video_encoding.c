@@ -2,16 +2,16 @@
 #include <stdbool.h>
 #include "mmal_video_encoding.h"
 
-#define VIDEO_WIDTH     1280
-#define VIDEO_HEIGHT    720
-#define VIDEO_FRAMERATE 10
-
-static FILE *vfile;
-
 static void mmal_video_encoding_init(mmal_video_encoding_handle_t *handle) {
     memset(handle, 0x0, sizeof(mmal_video_encoding_handle_t));
     
-    vfile = fopen("testvideo.h264", "w");
+    handle->settings.width = 1280;
+    handle->settings.height = 720;
+    handle->settings.framerate = 30;
+    handle->settings.output_file = fopen("video.h264", "w");
+    handle->settings.input_buffer_size = 1382400;
+    handle->settings.input_buffer_num = 3;
+    handle->settings.inline_vectors = false;
 }
 
 static void encoder_input_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
@@ -19,15 +19,15 @@ static void encoder_input_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_
     mmal_buffer_header_release(buffer);
 }
 
-//static bool w = false;
-
 static void encode_frame_h264(mmal_video_encoding_handle_t *handle, MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     fprintf(stderr, "dataLength=%d\n", buffer->length);
     
     if(buffer->flags & MMAL_BUFFER_HEADER_FLAG_CONFIG) {
         fprintf(stderr, "HEADER\n");
         
-        fwrite(buffer->data, sizeof(char), buffer->length, vfile);
+        // Write headers
+        if(handle->settings.output_file)
+            fwrite(buffer->data, sizeof(char), buffer->length, handle->settings.output_file);
     } else if((buffer->flags & MMAL_BUFFER_HEADER_FLAG_CODECSIDEINFO)) {
         fprintf(stderr, "MOTION\n");
     } else {
@@ -41,7 +41,9 @@ static void encode_frame_h264(mmal_video_encoding_handle_t *handle, MMAL_PORT_T 
             fprintf(stderr, "#END\n");
         }
         
-        fwrite(buffer->data, sizeof(char), buffer->length, vfile);
+        // Write frame data (no iframe support yet)
+        if(handle->settings.output_file)
+            fwrite(buffer->data, sizeof(char), buffer->length, handle->settings.output_file);
     }
     
     /*
@@ -104,20 +106,20 @@ MMAL_STATUS_T mmal_video_encoding_create(mmal_video_encoding_handle_t *handle) {
     MMAL_ES_FORMAT_T *format = handle->encoder_input->format;
     format->encoding = MMAL_ENCODING_I420;
     format->encoding_variant = MMAL_ENCODING_I420;
-    format->es->video.width = VIDEO_WIDTH;
-    format->es->video.height = VIDEO_HEIGHT;
+    format->es->video.width = handle->settings.width;
+    format->es->video.height = handle->settings.height;
     format->es->video.crop.x = 0;
     format->es->video.crop.y = 0;
-    format->es->video.crop.width = VIDEO_WIDTH;
-    format->es->video.crop.height = VIDEO_HEIGHT;
-    format->es->video.frame_rate.num = VIDEO_FRAMERATE;
+    format->es->video.crop.width = handle->settings.width;
+    format->es->video.crop.height = handle->settings.height;
+    format->es->video.frame_rate.num = handle->settings.framerate;
     format->es->video.frame_rate.den = 1;
     
     // same format on input and output
     mmal_format_copy(handle->encoder_output->format, handle->encoder_input->format);
     
-    handle->encoder_input->buffer_size = 1382400;//handle->encoder_input->buffer_size_recommended;
-    handle->encoder_input->buffer_num = 3; // handle->encoder_input->buffer_num_recommended;
+    handle->encoder_input->buffer_size = handle->settings.input_buffer_size;//handle->encoder_input->buffer_size_recommended;
+    handle->encoder_input->buffer_num = handle->settings.input_buffer_num; // handle->encoder_input->buffer_num_recommended;
     
     // Commit the port changes to the input port
     status = mmal_port_format_commit(handle->encoder_input);
@@ -156,13 +158,14 @@ MMAL_STATUS_T mmal_video_encoding_create(mmal_video_encoding_handle_t *handle) {
     printf("encoder_output->buffer_size: %d\n", handle->encoder_output->buffer_size);
     printf("encoder_output->buffer_num: %d\n", handle->encoder_output->buffer_num);
     
-    /*
-    status = mmal_port_parameter_set_boolean(handle->encoder_output, MMAL_PARAMETER_VIDEO_ENCODE_INLINE_VECTORS, true);
-    if (status != MMAL_SUCCESS) {
-        fprintf(stderr, "Error: unable to set MMAL_PARAMETER_VIDEO_ENCODE_INLINE_VECTORS on output port (%u)\n", status);
-        goto error;
+    if(handle->settings.inline_vectors) {
+        // Enable optional inline vectors (for motion analysis)
+        status = mmal_port_parameter_set_boolean(handle->encoder_output, MMAL_PARAMETER_VIDEO_ENCODE_INLINE_VECTORS, true);
+        if (status != MMAL_SUCCESS) {
+            fprintf(stderr, "Error: unable to set MMAL_PARAMETER_VIDEO_ENCODE_INLINE_VECTORS on output port (%u)\n", status);
+            goto error;
+        }  
     }
-    */
 
     // Create input buffer pool
     handle->encoder_input_pool = (MMAL_POOL_T *) mmal_port_pool_create(handle->encoder_input, handle->encoder_input->buffer_num, handle->encoder_input->buffer_size);
@@ -216,7 +219,9 @@ MMAL_STATUS_T mmal_video_encoding_create(mmal_video_encoding_handle_t *handle) {
 }
 
 void mmal_video_encoding_destroy(mmal_video_encoding_handle_t *handle) {
-    fclose(vfile);
+    if(handle->settings.output_file)
+        fclose(handle->settings.output_file);
+    
     if (handle->component) {
         mmal_port_disable(handle->encoder_input);
         mmal_port_disable(handle->encoder_output);

@@ -172,7 +172,7 @@ int main(int argc, char **argv) {
         
     time_t tstop = time(NULL) + 5;
     while (time(NULL) < tstop && !stop) {
-        //wait 5 seconds
+        // run for 5 seconds
         if(camera_read_frame(&camera_handle, &qpu_handle)){
             printf("frame received\n");
         }

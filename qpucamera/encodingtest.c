@@ -22,13 +22,7 @@ int main(int argc, char **argv) {
     
     time_t tstop = time(NULL) + 5;
     while (time(NULL) < tstop) {
-        //wait 5 seconds
-        /*
-        if(camera_read_frame(&camera_handle, &qpu_handle)){
-            printf("frame received\n");
-        }
-        */
-        
+        // run for 5 seconds        
         MMAL_BUFFER_HEADER_T *output_buffer = mmal_queue_get(handle.encoder_input_pool->queue);
         if (output_buffer) {
             
@@ -47,15 +41,12 @@ int main(int argc, char **argv) {
             //fprintf(stderr, "ERROR: mmal_queue_get (%d)\n", output_buffer);
         }
         
+        // sleep for 33 ms -> 30 FPS
         usleep(33000);
     }
     
-    fprintf(stderr, "- CLEANUP\n");
-    //usleep(5000000);
-    fprintf(stderr, "- CALL\n");
-    
     mmal_video_encoding_destroy(&handle);
     
-    fprintf(stderr, "- EXIT\n");
+    fprintf(stderr, "EXIT\n");
     return 0;
 }
