@@ -90,8 +90,7 @@ void qpu_program_execute(qpu_program_handle_t *handle, unsigned int *uniforms, i
     // Time and output
     clock_gettime(CLOCK_MONOTONIC_RAW, &stop);   
     accum = 1000 / (( stop.tv_sec - start.tv_sec ) + ( stop.tv_nsec - start.tv_nsec ) / 1000000.0);
-    printf( "fps = %lf\n", accum);
-    printf("ret=%x\n", ret);
+    printf("> QPU[fps=%lf, ret=%x]\n", accum, ret);
     
     // Unlock memory
     qpu_buffer_unlock(&handle->buffer_handle);
