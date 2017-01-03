@@ -15,6 +15,17 @@ static void convert_i420_to_rgba(char *frame_buffer, char *image_buffer, unsigne
 static void dump_frame_to_tga(char *frame_buffer, unsigned int frame_size, int image_width, int image_height, char *filename);
 static void dump_frame_to_file(char *frame_buffer, unsigned int frame_size, char *filename);
 
+typedef union int_to_float_to_int
+{
+    unsigned char uc[4];
+    char c[4];
+    unsigned short us[2];
+    short s[2];
+    unsigned int ui;
+    int i;
+    float f;
+} int_to_float_to_int;
+
 static void camera_progress_frame(mmal_video_encoding_handle_t *encoding_handle, qpu_program_handle_t *qpu_handle, unsigned int frameptr, bool debug_frame) {
     // Create output buffer
     qpu_buffer_handle_t output_buffer;
@@ -22,11 +33,32 @@ static void camera_progress_frame(mmal_video_encoding_handle_t *encoding_handle,
     qpu_buffer_lock(&output_buffer);
     
     // Execute QPU program
-    unsigned int uniforms[3];
-    uniforms[0] = 1280*720;
-    uniforms[1] = frameptr;
-    uniforms[2] = output_buffer.mem_ptr;
-    qpu_program_execute(qpu_handle, uniforms, 3);
+    unsigned int uniforms[8];
+    
+    int_to_float_to_int fstep;
+    uniforms[0] = 1280;
+    uniforms[1] = 720;
+    fstep.f = 1.0f/1280.0f;
+    uniforms[2] = fstep.ui;
+    fstep.f = 1.0f/720.0f;
+    uniforms[3] = fstep.ui;
+    
+    uniforms[4] = frameptr;
+    uniforms[5] = output_buffer.mem_ptr;
+    
+
+    
+    unsigned int tex_base_ptr = frameptr >> 12;
+    //uniforms[6] = 0x00000000 | (tex_base_ptr & 0xfffff) << 12 | (0 & 0x1) << 8 | (5 & 0xf) << 4;
+    //uniforms[7] = 0x00000000 | (720 & 0x7ff) << 20 | (1280 & 0x7ff) << 8 | (1 & 0x1) << 7 | (1 & 0x3) << 4;
+    unsigned int tex_type = 17;
+    uniforms[6] = 0x00000000 | (tex_base_ptr & 0xfffff) << 12 | (0 & 0x1) << 8 | (tex_type & 0xf) << 4;
+    uniforms[7] = 0x00000000 | (720 & 0x7ff) << 20 | (1280 & 0x7ff) << 8 | (1 & 0x1) << 7 | (1 & 0x3) << 4 | ((tex_type >> 4) & 0x1) << 31;
+    
+    
+    // 10101010101010101010 10 1 0 1010 1010
+    // 1 01010101010 1 01010101010 1 010 10 10
+    qpu_program_execute(qpu_handle, uniforms, 8);
     
     // Show output_buffer data and write output frame to file
     if(debug_frame) {
@@ -36,6 +68,14 @@ static void camera_progress_frame(mmal_video_encoding_handle_t *encoding_handle,
             if((j+1) % (16*4) == 0)
                 printf("\n");
         }
+        /*
+        unsigned int *output_buffer_int32 = output_buffer.arm_mem_ptr;
+        for (int j=0; j < (16*64); j++) {
+            printf("%08x ", output_buffer_int32[j]);
+            if((j+1) % 16 == 0)
+                printf("\n");
+        }
+        */
         
         dump_frame_to_tga(output_buffer.arm_mem_ptr, 1280*720, 1280, 720, "output.tga");
     }
@@ -69,7 +109,7 @@ static bool camera_read_frame(mmal_camera_handle_t *camera_handle, mmal_video_en
         // Get physical memory ptr and lock frame buffer
         unsigned int vc_handle = vcsm_vc_hdl_from_ptr(buf->data);
         unsigned int frameptr = mem_lock(qpu_handle->mb, vc_handle);
-        printf("Frame[size=%d, ptr=%lu]\n", buf->length, frameptr);
+        printf("Frame[size=%d, ptr=%08x]\n", buf->length, frameptr);
                 
         // Write input camera frame to file if its a debug frame
         if(debug_frame) {

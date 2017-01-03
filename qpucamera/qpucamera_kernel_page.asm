@@ -26,6 +26,9 @@
 .endf
 
 mov ra2, unif # Frame buffer size
+read unif
+read unif
+read unif
 mov ra3, unif # Frame buffer ptr
 mov ra4, unif # Output buffer ptr
 
